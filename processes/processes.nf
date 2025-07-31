@@ -33,7 +33,7 @@ process alignMinimap2 {
 }   
     
 process callClair3 {
-    container 'docker://hkubal/clair3:v1.0.10'
+    container 'docker://hkubal/clair3:v1.0.11'
     cpus 28
     memory '128 G'
     time '24.h'
@@ -103,7 +103,7 @@ process haplotagWhatshap {
         path 'haplotagged.bam', emit: bam
         path 'haplotagged.bam.bai', emit: bam_idx
 
-    script:
+	    script:
         """
         tabix ${phasedVcf}
         whatshap haplotag --reference ${reference} ${phasedVcf} ${alignedBam} -o 'haplotagged.bam' --ignore-read-groups \
@@ -113,7 +113,7 @@ process haplotagWhatshap {
 }
 
 process severusTumorOnly {
-    container 'docker://gokcekeskus/severus:v_13'
+    container 'docker://gokcekeskus/severus:dev_134407c'
     cpus 28
     memory '128 G'
     time '8.h'
@@ -126,19 +126,19 @@ process severusTumorOnly {
         path panelOfNormals
 
     output:
-        path 'severus_out/*', arity: '3..*', emit: severusFullOutput
-        path 'severus_out/somatic_SVs/severus_somatic.vcf', emit: severusSomaticVcf
+        path 'severus_out_15/*', arity: '3..*', emit: severusFullOutput
+        path 'severus_out_15/somatic_SVs/severus_somatic.vcf', emit: severusSomaticVcf
 
     script:
         """
         tabix ${phasedVcf}
-        severus --target-bam ${tumorBam} --out-dir severus_out -t ${task.cpus} --phasing-vcf ${phasedVcf} \
-            --vntr-bed ${vntrBed} --PON ${panelOfNormals} --min-reference-flank 0 --single-bp --resolve-overlaps --max-unmapped-seq 7000 --between-junction-ins 
+        severus --target-bam ${tumorBam} --out-dir severus_out_15 -t ${task.cpus} --phasing-vcf ${phasedVcf} \
+            --vntr-bed ${vntrBed} --PON ${panelOfNormals} --output-read-ids --min-reference-flank 0 --single-bp --resolve-overlaps --max-unmapped-seq 7000 --between-junction-ins 
         """
 }
 
 process severusTumorNormal {
-    container 'docker://gokcekeskus/severus:v_13'
+    container 'docker://gokcekeskus/severus:dev_134407c'
     cpus 28
     memory '128 G'
     time '8.h'
@@ -166,10 +166,10 @@ process severusTumorNormal {
 process wakhanTumorOnly {
     def genomeName = "Sample"
 
-    container 'docker://gokcekeskus/wakhan:dev_5cd31f5b'
+    container 'docker://gokcekeskus/wakhan:dev_3a3ea29'
     cpus 16
     memory '64 G'
-    time '4.h'
+    time '14.h'
 
     input:
         path tumorBam, stageAs: "tumor.bam"
@@ -177,26 +177,28 @@ process wakhanTumorOnly {
         path reference
         path tumorSmallPhasedVcf
         path severusSomaticVcf
+	path gene_list
 
     output:
-        path 'wakhan_out/*', arity: '3..*', emit: wakhanOutput
-        path 'wakhan_out/phasing_output/Sample.rephased.vcf.gz', emit: rephasedVcf
+        path 'wakhan_out_88e88ca_npcpd/*', arity: '3..*', emit: wakhanOutput
+        path 'wakhan_out_88e88ca_nocpd/phasing_output/Sample.rephased.vcf.gz', emit: rephasedVcf
 
     script:
         """
         tabix ${tumorSmallPhasedVcf}
         wakhan --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --tumor-vcf ${tumorSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --breakpoints ${severusSomaticVcf} --hets-ratio 0.25 --ploidy-range 1-6
+          --genome-name Sample --out-dir-plots wakhan_out_88e88ca_nocpd --bin-size 10000 --breakpoints ${severusSomaticVcf} \
+		 --ploidy-range 1-6 --loh-enable --contigs chr1-22,chrX --user-input-genes ${gene_list} --copynumbers-subclonal-enable 
         """
 }
 
 process wakhanTumorNormal {
     def genomeName = "Sample"
 
-    container 'docker://gokcekeskus/wakhan:dev_5cd31f5b'
+    container 'docker://gokcekeskus/wakhan:dev_3a3ea29'
     cpus 16
     memory '64 G'
-    time '4.h'
+    time '14.h'
 
     input:
         path tumorBam, stageAs: "tumor.bam"
@@ -212,7 +214,8 @@ process wakhanTumorNormal {
         """
         tabix ${normalSmallPhasedVcf}
         wakhan --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --normal-phased-vcf ${normalSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --breakpoints ${severusSomaticVcf} --ploidy-range 1-6
+          --genome-name Sample --out-dir-plots wakhan_out --breakpoints ${severusSomaticVcf} --bin-size-snps 100000 --bin-size 10000 \
+		--ploidy-range 1-6 --cpd-internal-segments --copynumbers-subclonal-enable
         """
 }
 
