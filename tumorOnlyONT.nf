@@ -1,8 +1,8 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl     = 2
-nextflow.preview.output = true   // required for entry-workflow publish/output
+nextflow.preview.output = true   
 
-// ---------- modules (assumes these exist with matching IO) ----------
+
 include { alignMinimap2; callClair3; phaseLongphase; deepsomaticTumorOnly;
           modkitDMR; modkitPileupAllele; modkitPileup;
           severusTumorOnly; haplotagWhatshap; wakhanCNA; wakhanHapcorrect } from "./processes/processes.nf"
@@ -10,87 +10,122 @@ include { modkitStats as modkitStats  } from "./processes/processes.nf"
 include { modkitStats as modkitStats2 } from "./processes/processes.nf"
 include { modkitStats as modkitStats3 } from "./processes/processes.nf"
 
+
+process REF_INDEX {
+  tag "${reference?.name}"
+  input:
+    path reference
+  output:
+    path "${reference}.fai", emit: ref_idx
+  script:
+  """
+  samtools faidx ${reference}
+  """
+}
+
 // ---------- user params ----------
-params.reads        = params.reads        ?: null
+params.reads        = params.reads        ?: null          
 params.reference    = params.reference    ?: null
 params.vntr         = params.vntr         ?: null
 params.sv_pon       = params.sv_pon       ?: null
 params.clair3_model = params.clair3_model ?: null
 params.cpgs         = params.cpgs         ?: null
-params.mode         = params.mode         ?: 'all'   // all | sv_cna | sv_cna_dmr
-params.alignment    = params.alignment    ?: 'true'  // (placeholder)
+params.bam          = params.bam          ?: null          // used when --alignment 'false'
+params.bai          = params.bai          ?: null          // used when --alignment 'false'
+params.mode         = params.mode         ?: 'all'         // all | sv_cna | sv_cna_dmr
+params.alignment    = params.alignment    ?: 'true'        // 'true' | 'false'
 
-// ---------- subworkflow with conditional steps ----------
+// ---------- subworkflow with alignment toggle + modes ----------
 workflow tumorOnlyOntWorkflow {
 
   take:
-    reads
-    reference
+    reads               // (sample, fastq) tuples (used only if alignment == 'true')
+    reference           // fasta
+    prealignedBam       // BAM (used only if alignment == 'false')
+    prealignedBai       // BAI (used only if alignment == 'false')
     vntrAnnotation
     svPanelOfNormals
     clair3Model
     cpgs
 
   main:
-    // mode flags
-    def RUN_ALL        = (params.mode == 'all')
-    def RUN_SV_CNA     = (params.mode in ['all','sv_cna','sv_cna_dmr'])
-    def RUN_DMR        = (params.mode in ['all','sv_cna_dmr'])
-    def RUN_DEEPSOM    = (params.mode == 'all')
+    def RUN_ALL     = (params.mode == 'all')
+    def RUN_SV_CNA  = (params.mode in ['all','sv_cna','sv_cna_dmr'])
+    def RUN_DMR     = (params.mode in ['all','sv_cna_dmr'])
+    def RUN_DEEPSOM = (params.mode == 'all')
 
-    // 1) Align (always, as written)
-    alignMinimap2(reference, reads.collect())
+    // Unify BAM/BAI/REF_IDX depending on alignment mode
+    Channel
+      .value(params.alignment.toString().toLowerCase() == 'true')
+      .set { ALIGN_FLAG }
 
-    // 2) Clair3 (always; longphase needs VCF)
+    // Defaults
+    def bamCh
+    def baiCh
+    def refIdxCh
+
+    if (ALIGN_FLAG.first()) {
+      // Align from reads
+      alignMinimap2(reference, reads.collect())
+      bamCh    = alignMinimap2.out.bam
+      baiCh    = alignMinimap2.out.bam_idx
+      refIdxCh = alignMinimap2.out.ref_idx
+    }
+    else {
+      // Use pre-aligned BAM/BAI; ensure we have a fasta index
+      REF_INDEX(reference)
+      bamCh    = prealignedBam
+      baiCh    = prealignedBai
+      refIdxCh = REF_INDEX.out.ref_idx
+    }
+
+    // 2) Clair3 (requires BAM/BAI/REF/REF_IDX)
     callClair3(
-      alignMinimap2.out.bam,
-      alignMinimap2.out.bam_idx,
+      bamCh,
+      baiCh,
       reference,
-      alignMinimap2.out.ref_idx,
+      refIdxCh,
       clair3Model
     )
 
-    // 3) Longphase (always)
+    // 3) Longphase (requires BAM/BAI/REF/REF_IDX + VCF)
     phaseLongphase(
-      alignMinimap2.out.bam,
-      alignMinimap2.out.bam_idx,
+      bamCh,
+      baiCh,
       reference,
-      alignMinimap2.out.ref_idx,
+      refIdxCh,
       callClair3.out.vcf
     )
 
-    // 4) Wakhan hap-correct (always)
+    // 4) Wakhan hap-correct
     wakhanHapcorrect(
-      alignMinimap2.out.bam,
-      alignMinimap2.out.bam_idx,
+      bamCh,
+      baiCh,
       reference,
       phaseLongphase.out.phasedVcf
     )
 
-    // 5) Whatshap haplotag (always)
+    // 5) Whatshap haplotag
     haplotagWhatshap(
       reference,
-      alignMinimap2.out.ref_idx,
+      refIdxCh,
       wakhanHapcorrect.out.rephasedVcf,
-      alignMinimap2.out.bam,
-      alignMinimap2.out.bam_idx
+      bamCh,
+      baiCh
     )
 
-    // Defaults for emits in case we skip things
-    def severusSomaticVcf    = Channel.empty()
-    def severusFullOutputCh  = Channel.empty()
-    def wakhanFullOutputCh   = Channel.empty()
-    def modkitHP1Ch          = Channel.empty()
-    def modkitHP2Ch          = Channel.empty()
-    def modkitPileCh         = Channel.empty()
-    def dmrCh                = Channel.empty()
-    def stats1Ch             = Channel.empty()
-    def stats2Ch             = Channel.empty()
-    def stats3Ch             = Channel.empty()
-    def deepSomCh            = Channel.empty()
+    // Prepare default (maybe-empty) channels for conditional steps
+    def severusSomaticVcfCh = Channel.empty()
+    def severusFullOutputCh = Channel.empty()
+    def wakhanDataOutputCh = Channel.empty()
+    def wakhanFullOutputCh  = Channel.empty()
+    def hp1Ch = Channel.empty(); def hp2Ch = Channel.empty()
+    def pileCh = Channel.empty(); def dmrCh = Channel.empty()
+    def s1Ch = Channel.empty();  def s2Ch  = Channel.empty(); def s3Ch = Channel.empty()
+    def deepSomCh = Channel.empty()
 
-    // 6) Severus + 7) WakhanCNA (conditional on SV/CNA modes)
-    if ( RUN_SV_CNA ) {
+    // 6) Severus + 7) WakhanCNA (if SV/CNA enabled)
+    if (RUN_SV_CNA) {
       severusTumorOnly(
         haplotagWhatshap.out.bam,
         haplotagWhatshap.out.bam_idx,
@@ -99,35 +134,36 @@ workflow tumorOnlyOntWorkflow {
         svPanelOfNormals
       )
 
-      // keep 6th input from wakhanHapcorrect
+      // keep the 6th input from wakhanHapcorrect
       wakhanCNA(
-        alignMinimap2.out.bam,
-        alignMinimap2.out.bam_idx,
+        bamCh,
+        baiCh,
         reference,
         wakhanHapcorrect.out.rephasedVcf,
         severusTumorOnly.out.severusSomaticVcf,
-        wakhanHapcorrect.out.wakhanOutput
+        wakhanHapcorrect.out.wakhanHPOutput
       )
 
-      severusSomaticVcf   = severusTumorOnly.out.severusSomaticVcf
+      severusSomaticVcfCh = severusTumorOnly.out.severusSomaticVcf
       severusFullOutputCh = severusTumorOnly.out.severusFullOutput
       wakhanFullOutputCh  = wakhanCNA.out.wakhanOutput
+      wakhanDataOutputCh = wakhanHapcorrect.out.wakhanHPOutput
     }
 
-    // 8) Modkit (only in all or sv_cna_dmr)
-    if ( RUN_DMR ) {
+    // 8) Modkit (DMR/Stats) if enabled
+    if (RUN_DMR) {
       modkitPileupAllele(
         haplotagWhatshap.out.bam,
         haplotagWhatshap.out.bam_idx,
         reference,
-        alignMinimap2.out.ref_idx
+        refIdxCh
       )
 
       modkitPileup(
         haplotagWhatshap.out.bam,
         haplotagWhatshap.out.bam_idx,
         reference,
-        alignMinimap2.out.ref_idx
+        refIdxCh
       )
 
       modkitDMR(
@@ -136,7 +172,7 @@ workflow tumorOnlyOntWorkflow {
         modkitPileupAllele.out.HP2bed,
         modkitPileupAllele.out.HP2bed_idx,
         reference,
-        alignMinimap2.out.ref_idx,
+        refIdxCh,
         cpgs
       )
 
@@ -144,7 +180,7 @@ workflow tumorOnlyOntWorkflow {
         modkitPileupAllele.out.HP1bed,
         modkitPileupAllele.out.HP1bed_idx,
         reference,
-        alignMinimap2.out.ref_idx,
+        refIdxCh,
         cpgs
       )
 
@@ -152,7 +188,7 @@ workflow tumorOnlyOntWorkflow {
         modkitPileupAllele.out.HP2bed,
         modkitPileupAllele.out.HP2bed_idx,
         reference,
-        alignMinimap2.out.ref_idx,
+        refIdxCh,
         cpgs
       )
 
@@ -160,93 +196,114 @@ workflow tumorOnlyOntWorkflow {
         modkitPileup.out.pileupbed,
         modkitPileup.out.pileupbed_idx,
         reference,
-        alignMinimap2.out.ref_idx,
+        refIdxCh,
         cpgs
       )
 
-      modkitHP1Ch  = modkitPileupAllele.out.HP1bed
-      modkitHP2Ch  = modkitPileupAllele.out.HP2bed
-      modkitPileCh = modkitPileup.out.pileupbed
-      dmrCh        = modkitDMR.out.DMRbed
-      stats1Ch     = modkitStats.out.stats
-      stats2Ch     = modkitStats2.out.stats
-      stats3Ch     = modkitStats3.out.stats
+      hp1Ch   = modkitPileupAllele.out.HP1bed
+      hp2Ch   = modkitPileupAllele.out.HP2bed
+      pileCh  = modkitPileup.out.pileupbed
+      dmrCh   = modkitDMR.out.DMRbed
+      s1Ch    = modkitStats.out.stats
+      s2Ch    = modkitStats2.out.stats
+      s3Ch    = modkitStats3.out.stats
     }
 
-    // 9) DeepSomatic (only in `all`)
-    if ( RUN_DEEPSOM ) {
+    // 9) DeepSomatic only in 'all'
+    if (RUN_DEEPSOM) {
       deepsomaticTumorOnly(
-        alignMinimap2.out.bam,
-        alignMinimap2.out.bam_idx,
+        bamCh,
+        baiCh,
         reference,
-        alignMinimap2.out.ref_idx
+        refIdxCh
       )
       deepSomCh = deepsomaticTumorOnly.out.deepsomaticOutput
     }
 
   emit:
-    // phasing & hap-correction / haplotag
+    // phasing / hap-correction / haplotag
     phasedVcf              = phaseLongphase.out.phasedVcf
     rephasedVcf            = wakhanHapcorrect.out.rephasedVcf
     haplotaggedBam         = haplotagWhatshap.out.bam
     haplotaggedBamidx      = haplotagWhatshap.out.bam_idx
-    // SV/CNA (maybe empty if mode excludes)
+
+    // SV/CNA
     severusFullOutput      = severusFullOutputCh
     wakhanFullOutput       = wakhanFullOutputCh
-    // DeepSomatic (maybe empty)
+    wakhanDataOutput       = wakhanDataOutputCh
+
+    // DeepSomatic
     deepsomaticOutput      = deepSomCh
-    // Methylation (maybe empty)
-    modkitPileupAlleleBED1 = modkitHP1Ch
-    modkitPileupAlleleBED2 = modkitHP2Ch
-    modkitPileupOut        = modkitPileCh
+
+    // Methylation
+    modkitPileupAlleleBED1 = hp1Ch
+    modkitPileupAlleleBED2 = hp2Ch
+    modkitPileupOut        = pileCh
     modkitDMROut           = dmrCh
-    modkitStatsOut         = stats1Ch
-    modkitStats2Out        = stats2Ch
-    modkitStats3Out        = stats3Ch
+    modkitStatsOut         = s1Ch
+    modkitStats2Out        = s2Ch
+    modkitStats3Out        = s3Ch
 }
 
 // ---------- entry workflow (publish/output) ----------
 workflow {
 
   main:
-    // arg checks
+    // Arg checks depend on alignment mode
     def missing = []
-    if (!params.reads)        missing << '--reads'
     if (!params.reference)    missing << '--reference'
     if (!params.vntr)         missing << '--vntr'
     if (!params.sv_pon)       missing << '--sv_pon'
     if (!params.clair3_model) missing << '--clair3_model'
     if (!params.cpgs)         missing << '--cpgs'
+
+    def alignTrue = params.alignment.toString().toLowerCase() == 'true'
+    if (alignTrue) {
+      if (!params.reads) missing << '--reads'
+    } else {
+      if (!params.bam) missing << '--bam'
+      if (!params.bai) missing << '--bai'
+    }
     if (missing) error "Missing required arguments: ${missing.join(', ')}"
 
     log.info "Mode: ${params.mode} | Alignment: ${params.alignment}"
 
-    reads_ch = Channel.fromPath(params.reads.split(" ").toList(), checkIfExists: true)
+    
+    // Build channels for whichever path we use
+    reads_ch = alignTrue
+       ? Channel.fromPath(params.reads.split(" ").toList(), checkIfExists: true)
+       : Channel.empty()
     reads_ch.view{it -> "Input reads: $it"}
+    
+    pre_bam_ch = !alignTrue ? Channel.fromPath(params.bam, checkIfExists:true) : Channel.empty()
+    pre_bai_ch = !alignTrue ? Channel.fromPath(params.bai, checkIfExists:true) : Channel.empty()
+
     ref_ch    = Channel.fromPath(params.reference,    checkIfExists:true)
     vntr_ch   = Channel.fromPath(params.vntr,         checkIfExists:true)
     svpon_ch  = Channel.fromPath(params.sv_pon,       checkIfExists:true)
     clair3_ch = Channel.fromPath(params.clair3_model, checkIfExists:true)
     cpgs_ch   = Channel.fromPath(params.cpgs,         checkIfExists:true)
 
-    out = tumorOnlyOntWorkflow(reads_ch, ref_ch, vntr_ch, svpon_ch, clair3_ch, cpgs_ch)
+    out = tumorOnlyOntWorkflow(
+      reads_ch, ref_ch, pre_bam_ch, pre_bai_ch, vntr_ch, svpon_ch, clair3_ch, cpgs_ch
+    )
 
- publish:
-    // assign to workflow outputs
-    phasedVcf              = out.phasedVcf
-    rephasedVcf            = out.rephasedVcf
-    haplotaggedBam         = out.haplotaggedBam
-    haplotaggedBamidx      = out.haplotaggedBamidx
-    severusFullOutput      = out.severusFullOutput
-    wakhanFullOutput       = out.wakhanFullOutput
-    deepsomaticOutput      = out.deepsomaticOutput
-    modkitPileupAlleleBED1 = out.modkitPileupAlleleBED1
-    modkitPileupAlleleBED2 = out.modkitPileupAlleleBED2
-    modkitPileupOut        = out.modkitPileupOut
-    modkitDMROut           = out.modkitDMROut
-    modkitStatsOut         = out.modkitStatsOut
-    modkitStats2Out        = out.modkitStats2Out
-    modkitStats3Out        = out.modkitStats3Out
+    publish:
+	phasedVcf              = out.phasedVcf
+	rephasedVcf            = out.rephasedVcf
+	haplotaggedBam         = out.haplotaggedBam
+	haplotaggedBamidx      = out.haplotaggedBamidx
+	severusFullOutput      = out.severusFullOutput
+	wakhanFullOutput       = out.wakhanFullOutput
+        wakhanDataOutput       = out.wakhanDataOutput
+	deepsomaticOutput      = out.deepsomaticOutput
+	modkitPileupAlleleBED1 = out.modkitPileupAlleleBED1
+	modkitPileupAlleleBED2 = out.modkitPileupAlleleBED2
+	modkitPileupOut        = out.modkitPileupOut
+	modkitDMROut           = out.modkitDMROut
+	modkitStatsOut         = out.modkitStatsOut
+	modkitStats2Out        = out.modkitStats2Out
+	modkitStats3Out        = out.modkitStats3Out
 }
   output {
     phasedVcf              { path 'phased_vcf'   }
@@ -255,6 +312,7 @@ workflow {
     haplotaggedBamidx      { path 'haplotagged_bam' }
     severusFullOutput      { path 'severus' }
     wakhanFullOutput       { path 'wakhan'  }
+    wakhanDataOutput       { path 'wakhan'  }
     deepsomaticOutput      { path 'deepsomatic' }
     modkitPileupAlleleBED1 { path 'methylation' }
     modkitPileupAlleleBED2 { path 'methylation' }
@@ -264,4 +322,5 @@ workflow {
     modkitStats2Out        { path 'methylation' }
     modkitStats3Out        { path 'methylation' }
   }
+
 

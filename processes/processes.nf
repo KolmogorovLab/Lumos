@@ -112,7 +112,7 @@ process haplotagWhatshap {
 }
 
 process modkitDMR{
-        conda 'modkit'
+        conda 'bioconda::ont-modkit'
         cpus 28
         memory '64 G'
         time '10.h'
@@ -130,13 +130,13 @@ process modkitDMR{
                 path 'dmr.bed', emit:DMRbed
         script:
         """
-		modkit dmr pair -a ${tumorBed} -b ${normalBed} -o dmr.bed -r ${cpgbed} --ref ${reference} --base C --threads ${task.cpus}
+		modkit dmr pair -a ${tumorBed} -b ${normalBed} -o ./dmr.bed -r ${cpgbed} --ref ${reference} --base C --threads ${task.cpus}
                 
         """
 }
 
 process modkitStats{
-        conda 'modkit'
+        conda 'bioconda::ont-modkit'
         cpus 28
         memory '64 G'
         time '10.h'
@@ -149,16 +149,16 @@ process modkitStats{
                 path cpgbed
 
         output:
-                path 'stats.tsv', emit:stats
-        script:
+        	path "${tumorBed.simpleName}.stats.tsv", emit: stats
+	script:
         """
-		modkit stats ${tumorBed} --regions ${cpgbed} -o stats.tsv [--mod-codes "h,m"] --threads ${task.cpus}
+		modkit stats ${tumorBed} --regions ${cpgbed} -o ./${tumorBed.simpleName}.stats.tsv --mod-codes "h,m" --threads ${task.cpus}
              
         """
 }
 
 process modkitPileupAllele{
-        conda 'modkit'
+        conda 'bioconda::ont-modkit bioconda::samtools bioconda::htslib'
         cpus 28
         memory '64 G'
         time '10.h'
@@ -175,17 +175,17 @@ process modkitPileupAllele{
                 path 'haplotagged_2.bed.gz.tbi', emit:HP2bed_idx
         script:
         """
-                modkit pileup ${tumorBam} -t ${task.cpus} --combine-strands --cpg --ref ${reference} --no-filtering --partition-tag HP --prefix haplotyped
-                bgzip -k haplotagged_1.bed
+                modkit pileup ${tumorBam} . -t ${task.cpus} --combine-strands --cpg --ref ${reference} --no-filtering --partition-tag HP --prefix haplotagged
+                bgzip haplotagged_1.bed
                 tabix -p bed haplotagged_1.bed.gz
-                bgzip -k haplotagged_2.bed
+                bgzip haplotagged_2.bed
                 tabix -p bed haplotagged_2.bed.gz
         """     
 }
 
 
 process modkitPileup{
-        conda 'modkit'
+        conda 'bioconda::ont-modkit bioconda::samtools bioconda::htslib'
         cpus 28
         memory '64 G'
         time '10.h'
@@ -200,8 +200,8 @@ process modkitPileup{
                 path 'pileup.bed.gz.tbi', emit:pileupbed_idx
         script:
         """
-                modkit pileup ${tumorBam} -t ${task.cpus} --combine-strands --cpg --ref ${reference} --no-filtering
-                bgzip -k pileup.bed.gz
+                modkit pileup ${tumorBam} pileup.bed -t ${task.cpus} --combine-strands --cpg --ref ${reference} --no-filtering
+                bgzip pileup.bed
                 tabix -p bed pileup.bed.gz
         """     
 }
@@ -260,7 +260,7 @@ process severusTumorNormal {
 process wakhanHapcorrect {
     def genomeName = "Sample"
 
-    container 'docker://gokcekeskus/wakhan:52d59c5'
+    container 'docker://gokcekeskus/wakhan:364f3e6'
     cpus 16
     memory '64 G'
     time '14.h'
@@ -272,20 +272,20 @@ process wakhanHapcorrect {
         path tumorSmallPhasedVcf
 
     output:
-        path 'wakhan_out/*', arity: '3..*', emit: wakhanOutput
-        path 'wakhan_out/phasing_output/Sample.rephased.vcf.gz', emit: rephasedVcf
+        path 'wakhan_out/*', arity: '3..*', emit: wakhanHPOutput
+        path 'wakhan_out/phasing_output/rephased.vcf.gz', emit: rephasedVcf
 
     script:
         """
         tabix ${tumorSmallPhasedVcf}
         wakhan hapcorrect --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --tumor-phased-vcf ${tumorSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --phaseblocks-enable --loh-enable --contigs chr1-22,chrX,chrY --copynumbers-subclonal-enable
+          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
         """
 }
 
 process wakhanCNA {
     def genomeName = "Sample"
-    container 'docker://gokcekeskus/wakhan:52d59c5'
+    container 'docker://gokcekeskus/wakhan:364f3e6'
     cpus 16
     memory '64 G'
     time '14.h'
@@ -299,20 +299,22 @@ process wakhanCNA {
 	path hapcorrect_out
 
     output:
-        path 'wakhan_out/*', arity: '3..*', emit: wakhanOutput
+        path "wakhan_out", emit: wakhanOutput
     script:
         """
         tabix ${tumorSmallPhasedVcf}
-		cp -r ${hapcorrect_out} wakhan_out
         wakhan cna --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --tumor-phased-vcf ${tumorSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs chr1-22,chrX,chrY --copynumbers-subclonal-enable
-        """
+          --genome-name Sample --use-sv-haplotypes --out-dir-plots . --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
+        mkdir -p wakhan_out
+	find . -mindepth 1 -maxdepth 1 -type d ! -name 'wakhan_out' -print0 | xargs -0 -I {} mv "{}" wakhan_out/
+	find . -maxdepth 1 -type f -name "*.html" -print0 | xargs -0 -I {} mv "{}" wakhan_out/
+	"""
 }
 
 process wakhanHapcorrectTN {
     def genomeName = "Sample"
 
-    container 'docker://gokcekeskus/wakhan:52d59c5'
+    container 'docker://gokcekeskus/wakhan:364f3e6'
     cpus 16
     memory '64 G'
     time '14.h'
@@ -324,20 +326,20 @@ process wakhanHapcorrectTN {
         path tumorSmallPhasedVcf
 
     output:
-        path 'wakhan_out/*', arity: '3..*', emit: wakhanOutput
-        path 'wakhan_out/phasing_output/Sample.rephased.vcf.gz', emit: rephasedVcf
+        path 'wakhan_out/*', arity: '3..*', emit: wakhanHPOutput
+        path 'wakhan_out/phasing_output/rephased.vcf.gz', emit: rephasedVcf
 
     script:
         """
         tabix ${tumorSmallPhasedVcf}
         wakhan hapcorrect --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --normal-phased-vcf ${tumorSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --phaseblocks-enable --loh-enable --contigs chr1-22,chrX,chrY --copynumbers-subclonal-enable
+          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
         """
 }
 
 process wakhanCNATN {
     def genomeName = "Sample"
-    container 'docker://gokcekeskus/wakhan:52d59c5'
+    container 'docker://gokcekeskus/wakhan:364f3e6'
     cpus 16
     memory '64 G'
     time '14.h'
@@ -351,14 +353,17 @@ process wakhanCNATN {
 	path hapcorrect_out
 
     output:
-        path 'wakhan_out/*', arity: '3..*', emit: wakhanOutput
+        path "wakhan_out", emit: wakhanOutput
     script:
         """
         tabix ${tumorSmallPhasedVcf}
 		cp -r ${hapcorrect_out} wakhan_out
         wakhan cna --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --normal-phased-vcf ${tumorSmallPhasedVcf} \
-          --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs chr1-22,chrX,chrY --copynumbers-subclonal-enable
-        """
+          --use-sv-haplotypes --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
+        mkdir -p wakhan_out
+        find . -mindepth 1 -maxdepth 1 -type d ! -name 'wakhan_out' -print0 | xargs -0 -I {} mv "{}" wakhan_out/
+        find . -maxdepth 1 -type f -name "*.html" -print0 | xargs -0 -I {} mv "{}" wakhan_out/
+	"""
 }
 
 
