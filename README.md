@@ -21,14 +21,14 @@ Currently, the pipeline includes the following steps:
 
 ```bash
 module load nextflow
-nextflow run tumorNormalONT.nf   --reads_tumor tumor.bam   --reads_normal normal.bam   --reference hg38.fasta   --outdir results   --vntr vntr.bed   --clair3_model clair3_models/ont
+nextflow run tumorNormalONT.nf   --reads_tumor tumor.bam   --reads_normal normal.bam   --reference hg38.fasta   --outdir results   --vntr vntr.bed   --clair3_model clair3_models/ont --cpgs cpgs.bed
 ```
 
 ### Tumor-Only Run
 
 ```bash
 module load nextflow
-nextflow run tumorOnlyONT.nf   --reads tumor.bam   --reference hg38.fasta   --outdir results   --vntr vntr.bed   --sv_pon PoN_1000G_hg38.tsv.gz   --clair3_model clair3_models/ont
+nextflow run tumorOnlyONT.nf   --reads tumor.bam   --reference hg38.fasta   --outdir results   --vntr vntr.bed   --sv_pon PoN_1000G_hg38.tsv.gz   --clair3_model clair3_models/ont --cpgs cpgs.bed
 ```
 
 > **Tip:** Always run inside an interactive session or with `sbatch` — **not** on the Biowulf head node.  
@@ -45,7 +45,7 @@ nextflow run tumorOnlyONT.nf   --reads tumor.bam   --reference hg38.fasta   --ou
 --reference     Reference FASTA  
 --vntr          BED file of tandem repeats (must be ordered)(e.g. ./annot/human_GRCh38_no_alt_analysis_set.trf.bed)
 --clair3_model  Path to Clair3 model  
---cpgs          CpG island BED file (e.g. ./annot/hg38_cpg_cleaned.bed)
+--cpgs          CpG island BED file required in sv_cna_dmr and all modes (e.g. ./annot/hg38_cpg_cleaned.bed)
 ```
 
 ### Tumor–Normal Only
