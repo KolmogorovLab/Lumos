@@ -185,7 +185,7 @@ process modkitPileupAllele{
 
 
 process modkitPileup{
-        conda 'bioconda::ont-modkit bioconda::samtools bioconda::htslib'
+        conda 'bioconda::ont-modkit bioconda::samtools bioconda::htslib bioconda::bedtools'
         cpus 28
         memory '64 G'
         time '10.h'
@@ -195,14 +195,21 @@ process modkitPileup{
                 path tumorBamIdx
                 path reference
                 path referenceIdx
+		path cpgbed
 	output:
                 path 'pileup.bed.gz', emit:pileupbed
                 path 'pileup.bed.gz.tbi', emit:pileupbed_idx
+		path 'pileup_cpg_subset.bed.gz',emit:pileupbed_subset
+		path 'pileup_cpg_subset.bed.gz.tbi', emit:pileupbed_subset_idx
         script:
         """
                 modkit pileup ${tumorBam} pileup.bed -t ${task.cpus} --combine-strands --cpg --ref ${reference} --no-filtering
                 bgzip pileup.bed
                 tabix -p bed pileup.bed.gz
+		bedtools intersect -a pileup.bed.gz -b ${cpgbed} -wa -wb > pileup_cpg.bed 
+		cut -f1-5,12,19-21 pileup_cpg.bed > pileup_cpg_subset.bed
+		bgzip pileup_cpg_subset.bed
+                tabix -p bed pileup_cpg_subset.bed.gz
         """     
 }
 
@@ -220,8 +227,8 @@ process severusTumorOnly {
         path panelOfNormals
 
     output:
-        path 'severus_out_15/*', arity: '3..*', emit: severusFullOutput
-        path 'severus_out_15/somatic_SVs/severus_somatic.vcf', emit: severusSomaticVcf
+        path 'severus_out/*', arity: '3..*', emit: severusFullOutput
+        path 'severus_out/somatic_SVs/severus_somatic.vcf', emit: severusSomaticVcf
 
     script:
         """
@@ -357,9 +364,8 @@ process wakhanCNATN {
     script:
         """
         tabix ${tumorSmallPhasedVcf}
-		cp -r ${hapcorrect_out} wakhan_out
         wakhan cna --threads ${task.cpus} --reference ${reference} --target-bam ${tumorBam} --normal-phased-vcf ${tumorSmallPhasedVcf} \
-          --use-sv-haplotypes --genome-name Sample --out-dir-plots wakhan_out --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
+          --use-sv-haplotypes --genome-name Sample --out-dir-plots . --bin-size 10000  --breakpoints ${severusSomaticVcf} --phaseblocks-enable --loh-enable --contigs ${params.contigs ?: 'chr1-22,chrX'} --copynumbers-subclonal-enable
         mkdir -p wakhan_out
         find . -mindepth 1 -maxdepth 1 -type d ! -name 'wakhan_out' -print0 | xargs -0 -I {} mv "{}" wakhan_out/
         find . -maxdepth 1 -type f -name "*.html" -print0 | xargs -0 -I {} mv "{}" wakhan_out/

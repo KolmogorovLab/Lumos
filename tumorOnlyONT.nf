@@ -163,7 +163,8 @@ workflow tumorOnlyOntWorkflow {
         haplotagWhatshap.out.bam,
         haplotagWhatshap.out.bam_idx,
         reference,
-        refIdxCh
+        refIdxCh,
+	cpgs
       )
 
       modkitDMR(
@@ -203,6 +204,7 @@ workflow tumorOnlyOntWorkflow {
       hp1Ch   = modkitPileupAllele.out.HP1bed
       hp2Ch   = modkitPileupAllele.out.HP2bed
       pileCh  = modkitPileup.out.pileupbed
+      pile2Ch = modkitPileup.out.pileupbed_subset
       dmrCh   = modkitDMR.out.DMRbed
       s1Ch    = modkitStats.out.stats
       s2Ch    = modkitStats2.out.stats
@@ -239,6 +241,7 @@ workflow tumorOnlyOntWorkflow {
     modkitPileupAlleleBED1 = hp1Ch
     modkitPileupAlleleBED2 = hp2Ch
     modkitPileupOut        = pileCh
+    modkitPileup2Out       = pile2Ch
     modkitDMROut           = dmrCh
     modkitStatsOut         = s1Ch
     modkitStats2Out        = s2Ch
@@ -300,10 +303,12 @@ workflow {
 	modkitPileupAlleleBED1 = out.modkitPileupAlleleBED1
 	modkitPileupAlleleBED2 = out.modkitPileupAlleleBED2
 	modkitPileupOut        = out.modkitPileupOut
+	modkitPileupClean      = out.modkitPileup2Out
 	modkitDMROut           = out.modkitDMROut
 	modkitStatsOut         = out.modkitStatsOut
 	modkitStats2Out        = out.modkitStats2Out
 	modkitStats3Out        = out.modkitStats3Out
+	
 }
   output {
     phasedVcf              { path 'phased_vcf'   }
@@ -317,6 +322,7 @@ workflow {
     modkitPileupAlleleBED1 { path 'methylation' }
     modkitPileupAlleleBED2 { path 'methylation' }
     modkitPileupOut        { path 'methylation' }
+    modkitPileupClean      { path 'methylation' }
     modkitDMROut           { path 'methylation' }
     modkitStatsOut         { path 'methylation' }
     modkitStats2Out        { path 'methylation' }
