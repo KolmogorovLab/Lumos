@@ -5,6 +5,7 @@ RUN apt-get update && \
 	apt-get install -y cmake git make gcc g++ autoconf bzip2 wget tabix libz-dev libncurses5-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev && \
     apt-get install -y python3-pip python3-virtualenv virtualenv python3-dev && \
 	apt-get clean
+RUN apt-get install -y bedtools
 
 ### samtools
 # 1.15
@@ -19,20 +20,7 @@ RUN wget https://github.com/samtools/samtools/releases/download/1.15/samtools-1.
 	make && \
 	cp samtools /usr/bin/samtools
 
-#bcftools
-ARG bcftoolsVer="1.19"
-WORKDIR /opt/bcftools
-RUN wget https://github.com/samtools/bcftools/releases/download/${bcftoolsVer}/bcftools-${bcftoolsVer}.tar.bz2 && \
-    tar -vxjf bcftools-${bcftoolsVer}.tar.bz2 && \
-    rm bcftools-${bcftoolsVer}.tar.bz2 && \
-    cd bcftools-${bcftoolsVer} && \
-    make && \
-    make install
-
-RUN pip3 install pysam pyfaidx numpy pandas plotly ruptures scikit-learn==1.2.0 scipy==1.9.2 vcf_parser kaleido intervaltree matplotlib
-
-WORKDIR /opt/wakhan
-RUN git clone https://github.com/KolmogorovLab/Wakhan && \
-    cd Wakhan && git checkout ed684d8 && \
-    echo '#!/bin/bash\npython3 /opt/wakhan/Wakhan/wakhan.py "$@"' > /usr/bin/wakhan && \
-    chmod +x /usr/bin/wakhan
+WORKDIR /opt/modkit
+RUN wget https://github.com/nanoporetech/modkit/releases/download/v0.4.1/modkit_v0.4.1_u16_x86_64.tar.gz && \
+    tar -xvf modkit_v0.4.1_u16_x86_64.tar.gz && \
+    cp dist_modkit_v0.4.1_cec0a0b/modkit /usr/bin/modkit
