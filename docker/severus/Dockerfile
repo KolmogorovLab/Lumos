@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 MAINTAINER Mikhail Kolmogorov, mikolmogorov@gmail.com
 RUN apt-get update && \
 	DEBIAN_FRONTEND="noninteractive" apt-get -y install tzdata && \
@@ -21,7 +21,7 @@ RUN wget https://github.com/samtools/samtools/releases/download/1.15/samtools-1.
 
 RUN git clone https://github.com/KolmogorovLab/Severus && \
     cd Severus && \
-    git checkout 82e7c0b && \
-    python3 setup.py install
+    git checkout 163146a && \
+    pip3 install -e .
 
-RUN pip3 install networkx>=2.6 pydot matplotlib biopython biopython pysam plotly
+RUN pip3 install "networkx>=2.6" pydot matplotlib numpy biopython pysam plotly

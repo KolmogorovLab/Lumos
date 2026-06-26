@@ -236,7 +236,7 @@ process modkitPileup{
             """     
 }
 
-def SEVERUS_DOCKER = 'docker://gokcekeskus/severus:v1_6'
+def SEVERUS_DOCKER = 'docker://mkolmogo/severus:1.8dev'
 
 process severusTumorOnly {
     container SEVERUS_DOCKER
@@ -289,7 +289,7 @@ process severusTumorNormal {
         """
 }
 
-def WAKHAN_DOCKER = 'mkolmogo/wakhan:0.4.0'
+def WAKHAN_DOCKER = 'docker://mkolmogo/wakhan:0.4.3'
 def WAKHAN_BIN = 50000
 
 process wakhanHapcorrect {
