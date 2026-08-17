@@ -289,7 +289,7 @@ process severusTumorNormal {
         """
 }
 
-def WAKHAN_DOCKER = 'docker://mkolmogo/wakhan:0.4.3'
+def WAKHAN_DOCKER = 'docker://mkolmogo/wakhan:0.5.0dev'
 def WAKHAN_BIN = 50000
 
 process wakhanHapcorrect {
